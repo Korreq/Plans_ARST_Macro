@@ -1,9 +1,21 @@
+//Implement loading config from ini file
 ReadDataKDM( "C:\\Users\\lukas\\Documents\\Codes\\Plans JS macros\\MODEL_ZW.kdm" );
 SaveTempBin( "C:\\Users\\lukas\\Documents\\Codes\\Plans JS macros\\arst\\tmp.bin" );
 
 CalcLF();
 
-var inputArr = [ [ "MIL-A3", "Q", 10, 70 ], [ "MIL-A1B", "D", 1 ], [ "MIL-A5", "D", 0.5 ], [ "MIL-T4B", "D", 0.5 ] ];
+//TODO
+//Load transformers data from file 
+var inputArr = [ 
+[ "MIL-A3", "Q", 10, 70 ], [ "MIL-A1B", "D", 1 ], 
+[ "MIL-A5", "D", 0.5 ], [ "MIL-T4B", "D", 0.5 ], 
+[ "WTO-A1", "D", 0.5 ], [ "WTO-A2", "D", 0.5 ] 
+
+,
+[ "OLT-A1", "D", 0.25 ],
+[ "OLT-A2", "D", 0.25 ]
+
+];
 
 printInfo( inputArr );
 
@@ -11,34 +23,28 @@ var delArr = getDelayArray( inputArr );
 
 sortArray( delArr );
 
-cprintf( "0 pass:" );
-
 printPass( delArr );
 
 var check = delArr.length;
-
-var counter = 1;
 
 while( check > 0 ){
   
   var t = delArr[ 0 ][ 0 ], n = delArr[ 0 ][ 1 ], eps = delArr[ 0 ][ 3 ];
   
   CalcLF();
-  
-  cprintf( "Vi: " + n.Vi + ", Vs: " + n.Vs + ", Eps: " + eps );
-  
-  if( n.Vi > n.Vs + eps ){
-  
-    if( t.TapLoc === 1 ) t.Stp0--; 
-      
-    else t.Stp0++;
+    
+  if( ( n.Vi > n.Vs + eps && t.TapLoc === 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc !== 1 ) ){
+
+    t.Stp0--;
+
+    switchTapOnParallelTransformers( t, -1 );
   }
 
-  else if( n.Vi < n.Vs - eps ){
-  
-    if( t.TapLoc === 1 ) t.Stp0++;
-    
-    else t.Stp0--;
+  else if( ( n.Vi > n.Vs + eps && t.TapLoc !== 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc === 1 )  ){
+
+    t.Stp0++;
+
+    switchTapOnParallelTransformers( t, 1 );
   }
   
   else{ 
@@ -53,19 +59,19 @@ while( check > 0 ){
   delArr = getDelayArray( inputArr );
 
   sortArray( delArr );
-    
-  cprintf( counter + " pass:"  );
-  
-  counter++;
   
   printPass( delArr );
 }
 
+//TODO
+//log changed transformers state in a file
 printInfo( inputArr );
 
 ReadTempBin( "C:\\Users\\lukas\\Documents\\Codes\\Plans JS macros\\arst\\tmp.bin" );
 
 function printPass( delArr ){
+
+  cprintf( "" );
 
   for( i in delArr ){ cprintf( delArr[ i ][ 0 ].Name + ": " + delArr[ i ][ 2 ] + ", Volt: " + delArr[ i ][ 1 ].Vi + "/" + delArr[ i ][ 1 ].Vs ); }
 }
@@ -154,6 +160,8 @@ function getDelayArray( inputArr ){
       
     var eps = inputArr[ i ][ 2 ];
     
+    //TODO
+    //else log transformator info
     if( ( t.TapLoc === 1 && t.Stp0 < 2 ) || ( t.TapLoc === 0 && t.Stp0 >= t.Lstp ) ){ continue; }
    
     if( inputArr[ i ][ 1 ] === "G" || inputArr[ i ][ 1 ] === "D" ){
@@ -186,5 +194,33 @@ function getDelayArray( inputArr ){
   }
 
   return delArr;
+}
+
+function switchTapOnParallelTransformers( t, value ){
+
+  var string;
+
+  for( var i = 1; i < Data.N_Trf; i++ ){
+
+    nt = TrfArray.get( i );
+
+    if( t.Name === nt.Name ) continue; 
+    
+    if( ( t.BegName !== nt.BegName || t.EndName !== nt.EndName ) && ( t.BegName !== nt.EndName || t.EndName !== nt.BegName )  ) continue;
+    
+    string = nt.Name + ": " + nt.Stp0 + " >>> ";
+
+    if( ( value < 0 && nt.Stp0 > 1 ) || ( value > 0 && nt.Stp0 < nt.Lstp ) ){
+    
+      if( t.BegName === nt.BegName ) nt.Stp0 += value;
+  
+      else nt.Stp0 -= value; 
+    }
+    //TODO
+    //else log transformator info
+    
+    
+    cprintf( string + nt.Stp0 + ", last tap: " + nt.Lstp );
+  }
 
 }
