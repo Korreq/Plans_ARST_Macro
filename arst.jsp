@@ -1,21 +1,27 @@
-//Implement loading config from ini file
-ReadDataKDM( "C:\\Users\\lukas\\Documents\\Codes\\Plans JS macros\\MODEL_ZW.kdm" );
-SaveTempBin( "C:\\Users\\lukas\\Documents\\Codes\\Plans JS macros\\arst\\tmp.bin" );
+//Location of folder where config file is located
+var homeFolder = "C:\\Users\\lukas\\Documents\\Github\\Plans_ARST_Macro\\files";
 
-CalcLF();
+//Creating file operation object
+var fso = new ActiveXObject( "Scripting.FileSystemObject" );
 
-//TODO
-//Load transformers data from file 
-var inputArr = [ 
-[ "MIL-A3", "Q", 10, 70 ], [ "MIL-A1B", "D", 1 ], 
-[ "MIL-A5", "D", 0.5 ], [ "MIL-T4B", "D", 0.5 ], 
-[ "WTO-A1", "D", 0.5 ], [ "WTO-A2", "D", 0.5 ] 
+//Initializing configuration object
+var conf = iniConfigConstructor( homeFolder, fso );
+var tmpFile = conf.homeFolder + "\\tmp.bin";
 
-,
-[ "OLT-A1", "D", 0.25 ],
-[ "OLT-A2", "D", 0.25 ]
+//Loading kdm model file and trying to save it as temporary binary file
+ReadDataKDM( conf.modelPath + "\\" + conf.modelName + ".kdm" );
+if( SaveTempBIN( tmpFile ) < 1 ) errorThrower( "Unable to create temporary file", "Unable to create temporary file, check if you are able to create files in homeFolder location" );
 
-];
+
+//Setting power flow calculation settings with settings from config file
+setPowerFlowSettings( conf );
+
+//Calculate power flow, if fails throw error 
+CPF();
+
+var inputFile = readFile( conf, fso );
+var inputArr = getInputArray( inputFile );
+inputFile.close();
 
 printInfo( inputArr );
 
@@ -31,7 +37,7 @@ while( check > 0 ){
   
   var t = delArr[ 0 ][ 0 ], n = delArr[ 0 ][ 1 ], eps = delArr[ 0 ][ 3 ];
   
-  CalcLF();
+  CPF();
     
   if( ( n.Vi > n.Vs + eps && t.TapLoc === 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc !== 1 ) ){
 
@@ -67,7 +73,11 @@ while( check > 0 ){
 //log changed transformers state in a file
 printInfo( inputArr );
 
-ReadTempBin( "C:\\Users\\lukas\\Documents\\Codes\\Plans JS macros\\arst\\tmp.bin" );
+//Loading original model
+ReadTempBIN( tmpFile );
+
+//Removing temporary binary file
+fso.DeleteFile( tmpFile );
 
 function printPass( delArr ){
 
@@ -223,4 +233,214 @@ function switchTapOnParallelTransformers( t, value ){
     cprintf( string + nt.Stp0 + ", last tap: " + nt.Lstp );
   }
 
+}
+
+
+//Function uses JS Math.round, takes value and returns rounded value to specified decimals 
+function roundTo( value, precision ){
+
+  return Math.round( value * ( 10 * precision ) ) / ( 10 * precision ) ;
+}
+
+//Set power flow settings using config file
+function setPowerFlowSettings( config ){
+
+  Calc.Itmax = config.maxIterations;
+  Calc.EPS10 = config.startingPrecision;
+  Calc.Eps = config.precision;
+  Calc.Met = config.method;
+}
+
+//Basic error thrower
+function errorThrower( message, error ){
+  
+  MsgBox( message, 16, "Error" );
+  throw error;
+}
+
+//Function adds loading bin file before throwing an error
+function saveErrorThrower( message, error, binPath ){
+
+  try{ ReadTempBIN( binPath ); }
+  
+  catch( e ){ MsgBox( "Couldn't load original model", 16, "Error" ) }
+
+  errorThrower( message, error );
+}
+
+//Calls built in power flow calculate function, throws error when it fails
+function CPF(){
+
+  if( CalcLF() != 1 ) errorThrower( "Power Flow calculation failed", -1 );
+}
+
+//Function takes conf object and depending on it's config creates folder in specified location. 
+//Throws error if conf object is null and when folder can't be created
+function createFolder( conf, fso ){
+
+  var message = "Unable to load configuration";
+  
+  if( !conf ) errorThrower( message, message );
+  
+  var folder = conf.folderName;
+  var folderPath = conf.homeFolder + folder;
+  
+  if( !fso.FolderExists( folderPath ) ){
+    
+    try{ fso.CreateFolder( folderPath ); }
+    
+    catch( err ){ 
+    
+      errorThrower( "Unable to create folder", "Unable to create folder, check if you are able to create folders in that location" );
+    }
+
+  }
+  
+  folder += "\\";
+
+  return folder;
+}
+
+//Function takes conf object and depending on it's config creates file in specified location.
+//Also can create folder where results are located depending on configuration file 
+//Throws error if conf object is null and when file can't be created
+function createFile( conf, fso ){
+  
+  var message = "Unable to load configuration";
+  if( !conf ) errorThrower( message, message );
+
+  var file = null;
+  
+  var folder = ( conf.createResultsFolder == 1 ) ? createFolder( conf, fso ) : "";
+  var timeStamp = ( conf.addTimestampToFile == 1 ) ? getCurrentDate() + "--" : "";
+  var fileLocation = conf.homeFolder + folder + timeStamp + conf.fileName + ".csv";
+  
+  try{ file = fso.CreateTextFile( fileLocation ); }
+  
+  catch( err ){ 
+    
+    errorThrower( "File arleady exists or unable to create it", "File arleady exists or unable to create it, check if you are able to create files in that location" );
+  }
+
+  return file;
+} 
+
+function readFile( conf, fso ){
+
+  var message = "Unable to load configuration";
+  if( !conf ) errorThrower( message, message );
+
+  var file = null;
+
+  var fileLocation = conf.inputFileLocation + conf.inputFileName + "." + conf.inputFileFormat;
+  
+  try{ file = fso.OpenTextFile( fileLocation, 1, false, 0 ); }
+
+  catch( err ){ errorThrower( "Unable to open file", -1 ); }
+
+  return file;
+}
+
+//Function uses built in .ini function to get it's settings from config file.
+//Returns conf object with settings taken from file. If file isn't found error is throwed instead.
+function iniConfigConstructor( iniPath, fso ){
+  
+  var confFile = iniPath + "\\config.ini";
+
+  if( !fso.FileExists( confFile ) ) errorThrower( "config.ini file not found", "Config file error, make sure your file location has config.ini file" );
+
+  //Initializing plans built in ini manager
+  var ini = CreateIniObject();
+  ini.Open( confFile );
+
+  var hFolder = ini.GetString( "main", "homeFolder", Main.WorkDir );
+  
+  //Declaring conf object and trying to fill it with config.ini configuration
+  var conf = {
+  
+    //Main
+    homeFolder: hFolder,
+    modelName: ini.GetString( "main", "modelName", "model" ),
+    modelPath: ini.GetString( "main", "modelPath", hFolder ),  
+    
+    //Folder
+    createResultsFolder: ini.GetBool( "folder", "createResultsFolder", 0 ),
+    folderName: ini.GetString( "folder", "folderName", "folder" ),
+    
+    //Files
+    addTimestampToFile: ini.GetBool( "files", "addTimestampToFile", 1 ),
+    inputFileLocation: ini.GetString( "files", "inputFileLocation", hFolder ),
+    inputFileName: ini.GetString( "files", "inputFileName", "input" ),
+    inputFileFormat: ini.GetString( "files", "inputFileFormat", "txt" ),
+    resultFileName: ini.GetString( "files", "rsultFileName", "log" ),
+    roundingPrecision: ini.GetInt( "files", "roundingPrecision", 2 ),
+    
+    //Power Flow
+    maxIterations: ini.GetInt( "power flow", "maxIterations", 300 ),
+    startingPrecision: ini.GetDouble( "power flow", "startingPrecision", 10.00 ),
+    precision: ini.GetDouble( "power flow", "precision", 1.00 ),
+    method: ini.GetInt( "power flow", "method", 1 )
+  };
+  
+  //Overwriting config.ini file
+  //Main
+  ini.WriteString( "main", "homeFolder", conf.homeFolder );
+  ini.WriteString( "main", "modelName", conf.modelName );
+  ini.WriteString( "main", "modelPath", conf.modelPath );
+
+  //Folder
+  ini.WriteBool( "folder", "createResultsFolder", conf.createResultsFolder );
+  ini.WriteString( "folder", "folderName", conf.folderName );
+    
+  //Files
+  ini.WriteBool( "files", "addTimestampToFile", conf.addTimestampToFile );
+  ini.WriteString( "files", "inputFileLocation", conf.inputFileLocation );
+  ini.WriteString( "files", "inputFileName", conf.inputFileName );
+  ini.WriteString( "files", "inputFileFormat", conf.inputFileFormat );
+  ini.WriteString( "files", "resultFileName", conf.resultFileName );
+  ini.WriteInt( "file", "roundingPrecision", conf.roundingPrecision );
+    
+  //Power Flow
+  ini.WriteInt( "power flow", "maxIterations", conf.maxIterations );
+  ini.WriteDouble( "power flow", "startingPrecision", conf.startingPrecision );
+  ini.WriteDouble( "power flow", "precision", conf.precision );
+  ini.WriteInt( "power flow", "method", conf.method );
+ 
+  return conf;
+}
+ 
+function getInputArray( file ){
+
+  var arr = [];
+
+  while(!file.AtEndOfStream){
+
+    var tmp = [];
+  
+    var line = file.ReadLine();
+      
+    while( line != "" ){
+     
+      tmp.push( line.replace(/(^\s+|\s+$)/g, '') );
+    
+      if( !file.AtEndOfStream ) line = file.ReadLine();
+      
+      else break; 
+    }
+    
+    arr.push( tmp );
+  }
+
+  return arr;
+}
+
+//Function takes current date and returns it in file safe format  
+function getCurrentDate(){
+  
+  var current = new Date();
+  
+  var formatedDateArray = [ ( '0' + ( current.getMonth() + 1 ) ).slice( -2 ), ( '0' + current.getDate() ).slice( -2 ), 
+  ( '0' + current.getHours() ).slice( -2 ), ( '0' + current.getMinutes() ).slice( -2 ), ( '0' + current.getSeconds() ).slice( -2 ) ];
+  
+  return current.getFullYear() + "-" + formatedDateArray[ 0 ] + "-" + formatedDateArray[ 1 ] + "--" + formatedDateArray[ 2 ] + "-" + formatedDateArray[ 3 ] + "-" + formatedDateArray[ 4 ];
 }
