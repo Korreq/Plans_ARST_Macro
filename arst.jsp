@@ -6,12 +6,18 @@ var fso = new ActiveXObject( "Scripting.FileSystemObject" );
 
 //Initializing configuration object
 var conf = iniConfigConstructor( homeFolder, fso );
-var tmpFile = conf.homeFolder + "\\tmp.bin";
 
 //Loading kdm model file and trying to save it as temporary binary file
 ReadDataKDM( conf.modelPath + "\\" + conf.modelName + ".kdm" );
-if( SaveTempBIN( tmpFile ) < 1 ) errorThrower( "Unable to create temporary file", "Unable to create temporary file, check if you are able to create files in homeFolder location" );
 
+if( conf.safeMode == 1 ){
+
+  var tmpFile = conf.homeFolder + "\\tmp.bin";
+
+  if( SaveTempBIN( tmpFile ) < 1 ) 
+    
+    errorThrower( "Unable to create temporary file", "Unable to create temporary file, check if you are able to create files in homeFolder location" );
+}
 
 //Setting power flow calculation settings with settings from config file
 setPowerFlowSettings( conf );
@@ -23,81 +29,73 @@ var inputFile = readFile( conf, fso );
 var inputArr = getInputArray( inputFile );
 inputFile.close();
 
-printInfo( inputArr );
+var resultFile = createFile( conf, fso );
 
-var delArr = getDelayArray( inputArr );
+resultFile.WriteLine( "Base data" );
+logBaseInfo( resultFile, inputArr );
+
+var delArr = getDelayArray( inputArr, resultFile );
 
 sortArray( delArr );
 
-printPass( delArr );
+//while( check > 0 && delArr.length > 0 ){
+while( delArr.length > 0 ){
 
-var check = delArr.length;
-
-while( check > 0 ){
-  
   var t = delArr[ 0 ][ 0 ], n = delArr[ 0 ][ 1 ], eps = delArr[ 0 ][ 3 ];
-  
-  CPF();
     
   if( ( n.Vi > n.Vs + eps && t.TapLoc === 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc !== 1 ) ){
 
     t.Stp0--;
 
-    switchTapOnParallelTransformers( t, -1 );
+    switchTapOnParallelTransformers( t, -1, resultFile );
   }
 
   else if( ( n.Vi > n.Vs + eps && t.TapLoc !== 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc === 1 )  ){
 
     t.Stp0++;
 
-    switchTapOnParallelTransformers( t, 1 );
+    switchTapOnParallelTransformers( t, 1, resultFile );
   }
   
   else{ 
-    
-    check--;
-    
+        
     delArr.shift();
     
     continue; 
   }
     
-  delArr = getDelayArray( inputArr );
+  CPF();
+  
+  delArr = getDelayArray( inputArr, resultFile );
 
   sortArray( delArr );
-  
-  printPass( delArr );
 }
 
-//TODO
-//log changed transformers state in a file
-printInfo( inputArr );
+resultFile.WriteLine( "Final data" );
+logBaseInfo( resultFile, inputArr );
 
-//Loading original model
-ReadTempBIN( tmpFile );
+resultFile.close();
 
-//Removing temporary binary file
-fso.DeleteFile( tmpFile );
+if( conf.safeMode == 1 ){
 
-function printPass( delArr ){
+  //Loading original model
+  ReadTempBIN( tmpFile );
 
-  cprintf( "" );
-
-  for( i in delArr ){ cprintf( delArr[ i ][ 0 ].Name + ": " + delArr[ i ][ 2 ] + ", Volt: " + delArr[ i ][ 1 ].Vi + "/" + delArr[ i ][ 1 ].Vs ); }
+  //Removing temporary binary file
+  fso.DeleteFile( tmpFile );
 }
 
-function printInfo( inputArr ){
-
-  cprintf("");
+function logBaseInfo( file, inputArr ){
 
   for( i in inputArr ){
 
     var t = TrfArray.Find( inputArr[ i ][ 0 ] );
+    var n = getTransformerNode( inputArr[ i ], t );
 
-    cprintf( "N: " + t.Name + ", Current Tap: " + t.Stp0 + ", Max Tap:" + t.Lstp );
+    file.WriteLine( t.Name + ", Tap: " + t.Stp0 + "\\" + t.Lstp + ", Node: " + n.Name + ", Volt: " + n.Vi + "\\" + n.Vs );
   }
 
-  cprintf("");
+  file.WriteLine( " " );
 }
 
 function sortArray( array ){
@@ -140,7 +138,30 @@ function getTau( basePower, usingReactivePower ){
   
 }
 
-function getDelayArray( inputArr ){
+function getTransformerNode( inputArrElement, t ){
+
+  var n = null;
+
+  switch( inputArrElement[ 1 ] ){
+    
+    case "G":
+      
+      n = nodArray.Find( t.BegName );
+      
+      break;
+     
+    case "D":
+    case "Q":
+    
+      n = nodArray.Find( t.EndName );
+      
+      break;
+  }
+
+  return n;
+}
+
+function getDelayArray( inputArr, resultFile ){
 
   var delArr = [];
   
@@ -148,31 +169,18 @@ function getDelayArray( inputArr ){
 
     var t = TrfArray.Find( inputArr[ i ][ 0 ] );
 
-    var n = null;
-    
-    switch( inputArr[ i ][ 1 ] ){
-    
-      case "G":
-        
-        n = nodArray.Find( t.BegName );
-        
-        break;
-       
-      case "D":
-      case "Q":
-      
-        n = nodArray.Find( t.EndName );
-        
-        break;
-    }
+    var n = getTransformerNode( inputArr[ i ], t );
      
     var tm = u = q = 0;
       
     var eps = inputArr[ i ][ 2 ];
     
-    //TODO
-    //else log transformator info
-    if( ( t.TapLoc === 1 && t.Stp0 < 2 ) || ( t.TapLoc === 0 && t.Stp0 >= t.Lstp ) ){ continue; }
+    if( ( t.TapLoc === 1 && t.Stp0 < 2 ) || ( t.TapLoc === 0 && t.Stp0 >= t.Lstp ) ){ 
+    
+      resultFile.WriteLine( t.Name + " reached max tap " + t.Stp0 + "\\" + t.Lstp );
+
+      continue; 
+    }
    
     if( inputArr[ i ][ 1 ] === "G" || inputArr[ i ][ 1 ] === "D" ){
          
@@ -206,7 +214,7 @@ function getDelayArray( inputArr ){
   return delArr;
 }
 
-function switchTapOnParallelTransformers( t, value ){
+function switchTapOnParallelTransformers( t, value, resultFile ){
 
   var string;
 
@@ -226,11 +234,8 @@ function switchTapOnParallelTransformers( t, value ){
   
       else nt.Stp0 -= value; 
     }
-    //TODO
-    //else log transformator info
     
-    
-    cprintf( string + nt.Stp0 + ", last tap: " + nt.Lstp );
+    else resultFile.WriteLine( nt.Name + " reached max tap " + nt.Stp0 + "\\" + nt.Lstp );
   }
 
 }
@@ -313,7 +318,7 @@ function createFile( conf, fso ){
   
   var folder = ( conf.createResultsFolder == 1 ) ? createFolder( conf, fso ) : "";
   var timeStamp = ( conf.addTimestampToFile == 1 ) ? getCurrentDate() + "--" : "";
-  var fileLocation = conf.homeFolder + folder + timeStamp + conf.fileName + ".csv";
+  var fileLocation = conf.homeFolder + folder + timeStamp + conf.resultFileName + ".txt";
   
   try{ file = fso.CreateTextFile( fileLocation ); }
   
@@ -362,7 +367,8 @@ function iniConfigConstructor( iniPath, fso ){
     homeFolder: hFolder,
     modelName: ini.GetString( "main", "modelName", "model" ),
     modelPath: ini.GetString( "main", "modelPath", hFolder ),  
-    
+    safeMode: ini.GetBool( "main", "safeMode", 1 ),
+
     //Folder
     createResultsFolder: ini.GetBool( "folder", "createResultsFolder", 0 ),
     folderName: ini.GetString( "folder", "folderName", "folder" ),
@@ -387,7 +393,8 @@ function iniConfigConstructor( iniPath, fso ){
   ini.WriteString( "main", "homeFolder", conf.homeFolder );
   ini.WriteString( "main", "modelName", conf.modelName );
   ini.WriteString( "main", "modelPath", conf.modelPath );
-
+  ini.WriteBool( "main", "safeMode", conf.safeMode );
+  
   //Folder
   ini.WriteBool( "folder", "createResultsFolder", conf.createResultsFolder );
   ini.WriteString( "folder", "folderName", conf.folderName );
