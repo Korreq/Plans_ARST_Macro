@@ -42,28 +42,56 @@ sortArray( delArr );
 while( delArr.length > 0 ){
 
   var t = delArr[ 0 ][ 0 ], n = delArr[ 0 ][ 1 ], eps = delArr[ 0 ][ 3 ];
+  
+  var qVs = ( delArr[ 0 ][ 4 ] ) ? delArr[ 0 ][ 4 ] : null ;
+  
+  if( 
+      ( 
+        qVs && 
+        ( 
+          ( n.Qend > qVs + eps && t.TapLoc === 1 ) || 
+          ( n.Qend < qVs - eps && t.TapLoc !== 1 ) 
+        )    
+      ) 
+      || 
+      ( 
+        ( n.Vi > n.Vs + eps && t.TapLoc === 1 ) || 
+        ( n.Vi < n.Vs - eps && t.TapLoc !== 1 )  
+      )
+    ){
     
-  if( ( n.Vi > n.Vs + eps && t.TapLoc === 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc !== 1 ) ){
-
     t.Stp0--;
-
-    switchTapOnParallelTransformers( t, -1, resultFile );
+    
+    switchTapOnParallelTransformers( t, -1, resultFile );  
   }
-
-  else if( ( n.Vi > n.Vs + eps && t.TapLoc !== 1 ) || ( n.Vi < n.Vs - eps && t.TapLoc === 1 )  ){
-
+  
+  else if( 
+      ( 
+        qVs && 
+        ( 
+          ( n.Qend > qVs + eps && t.TapLoc !== 1 ) || 
+          ( n.Qend < qVs - eps && t.TapLoc === 1 ) 
+        )    
+      ) 
+      || 
+      ( 
+        ( n.Vi > n.Vs + eps && t.TapLoc !== 1 ) || 
+        ( n.Vi < n.Vs - eps && t.TapLoc === 1 )  
+      )
+    ){
+  
     t.Stp0++;
-
+    
     switchTapOnParallelTransformers( t, 1, resultFile );
   }
   
-  else{ 
-        
+  else{
+  
     delArr.shift();
     
     continue; 
   }
-    
+
   CPF();
   
   delArr = getDelayArray( inputArr, resultFile );
@@ -92,7 +120,20 @@ function logBaseInfo( file, inputArr ){
     var t = TrfArray.Find( inputArr[ i ][ 0 ] );
     var n = getTransformerNode( inputArr[ i ], t );
 
-    file.WriteLine( t.Name + ", Tap: " + t.Stp0 + "\\" + t.Lstp + ", Node: " + n.Name + ", Volt: " + n.Vi + "\\" + n.Vs );
+    file.Write( t.Name + ", Tap: " + t.Stp0 + "\\" + t.Lstp + ", Node: " + n.Name );
+    
+    if( inputArr[ i ][ 1 ] == "Q" ){
+    
+      var bra = BraArray.Find( inputArr[ i ][ 0 ] );
+    
+      file.WriteLine( ", React Pow: " + bra.Qend + "\\" + inputArr[ i ][ 3 ] );
+    }
+    
+    else{
+    
+      file.WriteLine(  ", Volt: " + n.Vi + "\\" + n.Vs );
+    }
+    
   }
 
   file.WriteLine( " " );
@@ -151,9 +192,14 @@ function getTransformerNode( inputArrElement, t ){
       break;
      
     case "D":
-    case "Q":
     
       n = nodArray.Find( t.EndName );
+    
+      break;
+      
+    case "Q":  
+      
+      n = braArray.Find( t.Name );
       
       break;
   }
@@ -191,24 +237,28 @@ function getDelayArray( inputArr, resultFile ){
       else continue;
       
       tm = ( getTau( n.Vn, false ) * 0.1 ) / u;
+      
+      delArr.push( [ t, n, tm, eps ] ); 
     }  
     
     else if( inputArr[ i ][ 1 ] === "Q" ){
     
       var qVs = inputArr[ i ][ 3 ] ;
     
-      var bra = BraArray.Find( inputArr[ i ][ 0 ] );
-         
+      var bra = n;
+              
       if( bra.Qend > qVs + eps ) q = bra.Qend - ( qVs + eps );
     
-      else if( bra.Qend < qVs - eps ) q = ( qVs - eps ) - bra.Qend;
-            
+      else if( bra.Qend < qVs - eps ) q = ( qVs - eps ) - bra.Qend; 
+       
       else continue;
       
       tm = ( getTau( 0, true ) * 0.1 ) / q;
+      
+      delArr.push( [ t, n, tm, eps, qVs ] ); 
     }
 
-    delArr.push( [ t, n, tm, eps ] ); 
+    //delArr.push( [ t, n, tm, eps ] ); 
   }
 
   return delArr;
