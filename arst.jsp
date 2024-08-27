@@ -5,106 +5,113 @@ var homeFolder = "C:\\Users\\lukas\\Documents\\Github\\Plans_ARST_Macro\\files";
 var fso = new ActiveXObject( "Scripting.FileSystemObject" );
 
 //Initializing configuration object
-var conf = iniConfigConstructor( homeFolder, fso );
+var config = iniConfigConstructor( homeFolder, fso );
 
 //Loading kdm model file and trying to save it as temporary binary file
-ReadDataKDM( conf.modelPath + "\\" + conf.modelName + ".kdm" );
+ReadDataKDM( config.modelPath + "\\" + config.modelName + ".kdm" );
 
-if( conf.safeMode == 1 ){
+//If safe mode is turn on in config file then try to create temporary file with original state of model
+if( config.safeMode == 1 ){
 
-  var tmpFile = conf.homeFolder + "\\tmp.bin";
+  var tmpFile = config.homeFolder + "\\tmp.bin";
 
-  if( SaveTempBIN( tmpFile ) < 1 ) 
-    
-    errorThrower( "Unable to create temporary file", "Unable to create temporary file, check if you are able to create files in homeFolder location" );
+  if( SaveTempBIN( tmpFile ) < 1 ) errorThrower( "Unable to create temporary file" );
 }
 
 //Setting power flow calculation settings with settings from config file
-setPowerFlowSettings( conf );
+setPowerFlowSettings( config );
 
 //Calculate power flow, if fails throw error 
 CPF();
 
-var inputFile = readFile( conf, fso );
-var inputArr = getInputArray( inputFile );
+//Try to read file from location specified in configuration file, then make array from file and close the file
+var inputFile = readFile( config, fso );
+var inputArray = getInputArray( inputFile );
 inputFile.close();
 
-var resultFile = createFile( conf, fso );
+//Create file for logging
+var resultFile = createFile( config, fso );
 
+//Write all detected transformers from input file with taps and coresponding attribute to log file
 resultFile.WriteLine( "Base data" );
-logBaseInfo( resultFile, inputArr );
+logBaseInfo( resultFile, inputArray );
 
-var delArr = getDelayArray( inputArr, resultFile );
+//Get array with transformers that are near their max voltage/reactive power limit
+var delayArray = getDelayArray( inputArray, resultFile );
 
-sortArray( delArr );
+//Sort delay array, so transformer with the least delay is first in array
+sortArray( delayArray );
 
-//while( check > 0 && delArr.length > 0 ){
-while( delArr.length > 0 ){
+//While there are any transformers in delay array check if the transformer with the least delay is near it's maximum voltage/reactive power limit.
+//If it's near limit then change transformer's tap depending on taps position. After that recalulate power flow and get new delay array.
+while( delayArray.length > 0 ){
 
-  var t = delArr[ 0 ][ 0 ], n = delArr[ 0 ][ 1 ], eps = delArr[ 0 ][ 3 ];
+  var transformer = delayArray[ 0 ][ 0 ], node = delayArray[ 0 ][ 1 ], epsilon = delayArray[ 0 ][ 3 ];
   
-  var qVs = ( delArr[ 0 ][ 4 ] ) ? delArr[ 0 ][ 4 ] : null ;
+  //Reactive power setpoint is required to do tap changes dependent on reactive power 
+  //other calculations setpoint are directry taken from plans built in functions 
+  var reactivePowerSetpoint = ( delayArray[ 0 ][ 4 ] ) ? delayArray[ 0 ][ 4 ] : null ;
   
   if( 
       ( 
-        qVs && 
+        reactivePowerSetpoint && 
         ( 
-          ( n.Qend > qVs + eps && t.TapLoc === 1 ) || 
-          ( n.Qend < qVs - eps && t.TapLoc !== 1 ) 
+          ( node.Qend > reactivePowerSetpoint + epsilon && transformer.TapLoc === 1 ) || 
+          ( node.Qend < reactivePowerSetpoint - epsilon && transformer.TapLoc !== 1 ) 
         )    
       ) 
       || 
       ( 
-        ( n.Vi > n.Vs + eps && t.TapLoc === 1 ) || 
-        ( n.Vi < n.Vs - eps && t.TapLoc !== 1 )  
+        ( node.Vi > node.Vs + epsilon && transformer.TapLoc === 1 ) || 
+        ( node.Vi < node.Vs - epsilon && transformer.TapLoc !== 1 )  
       )
     ){
     
-    t.Stp0--;
+    transformer.Stp0--;
     
-    switchTapOnParallelTransformers( t, -1, resultFile );  
+    switchTapOnParallelTransformers( transformer, -1, resultFile );  
   }
   
   else if( 
+    ( reactivePowerSetpoint && 
       ( 
-        qVs && 
-        ( 
-          ( n.Qend > qVs + eps && t.TapLoc !== 1 ) || 
-          ( n.Qend < qVs - eps && t.TapLoc === 1 ) 
-        )    
-      ) 
-      || 
-      ( 
-        ( n.Vi > n.Vs + eps && t.TapLoc !== 1 ) || 
-        ( n.Vi < n.Vs - eps && t.TapLoc === 1 )  
-      )
-    ){
+        ( node.Qend > reactivePowerSetpoint + epsilon && transformer.TapLoc !== 1 ) || 
+        ( node.Qend < reactivePowerSetpoint - epsilon && transformer.TapLoc === 1 ) 
+      )    
+    ) 
+    || 
+    ( 
+      ( node.Vi > node.Vs + epsilon && transformer.TapLoc !== 1 ) || 
+      ( node.Vi < node.Vs - epsilon && transformer.TapLoc === 1 )  
+    )
+  ){
   
-    t.Stp0++;
+    transformer.Stp0++;
     
-    switchTapOnParallelTransformers( t, 1, resultFile );
+    switchTapOnParallelTransformers( transformer, 1, resultFile );
   }
   
   else{
   
-    delArr.shift();
+    delayArray.shift();
     
     continue; 
   }
 
   CPF();
   
-  delArr = getDelayArray( inputArr, resultFile );
+  delayArray = getDelayArray( inputArray, resultFile );
 
-  sortArray( delArr );
+  sortArray( delayArray );
 }
 
+//Write all detected transformers from input file with taps and coresponding attribute to log file after all tap changes are done
 resultFile.WriteLine( "Final data" );
-logBaseInfo( resultFile, inputArr );
-
+logBaseInfo( resultFile, inputArray );
 resultFile.close();
 
-if( conf.safeMode == 1 ){
+//If safe mode is active, load back original model, meaning that all changes done by this macro is reversed to original state
+if( config.safeMode == 1 ){
 
   //Loading original model
   ReadTempBIN( tmpFile );
@@ -113,27 +120,20 @@ if( conf.safeMode == 1 ){
   fso.DeleteFile( tmpFile );
 }
 
-function logBaseInfo( file, inputArr ){
+//Functon takes file to log data into and array with found transformers from input file and
+//transformers details are written to logging file
+function logBaseInfo( file, inputArray ){
 
-  for( i in inputArr ){
+  for( i in inputArray ){
 
-    var t = TrfArray.Find( inputArr[ i ][ 0 ] );
-    var n = getTransformerNode( inputArr[ i ], t );
+    var transformer = TrfArray.Find( inputArray[ i ][ 0 ] );
+    var node = getTransformerNode( inputArray[ i ], transformer );
 
-    file.Write( t.Name + ", Tap: " + t.Stp0 + "\\" + t.Lstp + ", Node: " + n.Name );
+    file.Write( transformer.Name + ", Tap: " + transformer.Stp0 + "\\" + transformer.Lstp + ", Node: " + node.Name );
     
-    if( inputArr[ i ][ 1 ] == "Q" ){
+    if( inputArray[ i ][ 1 ] == "Q" ) file.WriteLine( ", React Pow: " + node.Qend + "\\" + inputArray[ i ][ 3 ] );
     
-      var bra = BraArray.Find( inputArr[ i ][ 0 ] );
-    
-      file.WriteLine( ", React Pow: " + bra.Qend + "\\" + inputArr[ i ][ 3 ] );
-    }
-    
-    else{
-    
-      file.WriteLine(  ", Volt: " + n.Vi + "\\" + n.Vs );
-    }
-    
+    else file.WriteLine(  ", Volt: " + node.Vi + "\\" + node.Vs );
   }
 
   file.WriteLine( " " );
@@ -153,7 +153,7 @@ function sortArray( array ){
         
         array[ j ] = element;
         
-        array [ i ] = tmp;
+        array[ i ] = tmp;
         
         break;
       }
@@ -164,6 +164,7 @@ function sortArray( array ){
     
 }
 
+//Function returns specific tau value depending on it's node declared voltage or if reactive power is used in calculation   
 function getTau( basePower, usingReactivePower ){
 
   if( usingReactivePower ) return 9000;
@@ -179,27 +180,28 @@ function getTau( basePower, usingReactivePower ){
   
 }
 
-function getTransformerNode( inputArrElement, t ){
+//Function return transformer's node/branch depending on category in an input file  
+function getTransformerNode( inputArrayElement, transformer ){
 
   var n = null;
 
-  switch( inputArrElement[ 1 ] ){
+  switch( inputArrayElement[ 1 ] ){
     
     case "G":
       
-      n = nodArray.Find( t.BegName );
+      n = nodArray.Find( transformer.BegName );
       
       break;
      
     case "D":
     
-      n = nodArray.Find( t.EndName );
+      n = nodArray.Find( transformer.EndName );
     
       break;
       
     case "Q":  
       
-      n = braArray.Find( t.Name );
+      n = braArray.Find( transformer.Name );
       
       break;
   }
@@ -207,89 +209,94 @@ function getTransformerNode( inputArrElement, t ){
   return n;
 }
 
-function getDelayArray( inputArr, resultFile ){
+//Function takes input array and log file, returns array with delays of each transformator which falls into checks
+function getDelayArray( inputArray, resultFile ){
 
-  var delArr = [];
+  var delayArray = [];
   
-  for( i in inputArr ){
+  for( i in inputArray ){
 
-    var t = TrfArray.Find( inputArr[ i ][ 0 ] );
+    var transformer = TrfArray.Find( inputArray[ i ][ 0 ] );
 
-    var n = getTransformerNode( inputArr[ i ], t );
+    var node = getTransformerNode( inputArray[ i ], transformer );
      
-    var tm = u = q = 0;
-      
-    var eps = inputArr[ i ][ 2 ];
+    var delay = u = q = 0, epsilon = inputArray[ i ][ 2 ];
     
-    if( ( t.TapLoc === 1 && t.Stp0 < 2 ) || ( t.TapLoc === 0 && t.Stp0 >= t.Lstp ) ){ 
+    //If transformer is on it's last tap then log it's details and go to next transformator
+    if( ( transformer.TapLoc === 1 && transformer.Stp0 < 2 ) || ( transformer.TapLoc === 0 && transformer.Stp0 >= transformer.Lstp ) ){ 
     
-      resultFile.WriteLine( t.Name + " reached max tap " + t.Stp0 + "\\" + t.Lstp );
+      resultFile.WriteLine( transformer.Name + " reached max tap " + transformer.Stp0 + "\\" + transformer.Lstp );
 
       continue; 
     }
    
-    if( inputArr[ i ][ 1 ] === "G" || inputArr[ i ][ 1 ] === "D" ){
-         
-      if( n.Vi > ( n.Vs + eps ) ) u = n.Vi - ( n.Vs + eps );
+    //Depending on criteria specified in input file for each transfomers check if conditions are true then calculate delay and push it to delay array
+
+    if( inputArray[ i ][ 1 ] === "G" || inputArray[ i ][ 1 ] === "D" ){
+
+      //If calculated voltage out of range of voltage setpoint +/- epsilon then calculate delta of these values 
+      if( node.Vi > ( node.Vs + epsilon ) ) u = node.Vi - ( node.Vs + epsilon );
       
-      else if( n.Vi < ( n.Vs - eps ) ) u = ( n.Vs - eps ) - n.Vi;
+      else if( node.Vi < ( node.Vs - epsilon ) ) u = ( node.Vs - epsilon ) - node.Vi;
     
       else continue;
       
-      tm = ( getTau( n.Vn, false ) * 0.1 ) / u;
+      //Get Tau multiply it by 0.1 and divide it by delta u
+      delay = ( getTau( node.Vn, false ) * 0.1 ) / u;
       
-      delArr.push( [ t, n, tm, eps ] ); 
+      delayArray.push( [ transformer, node, delay, epsilon ] ); 
     }  
     
-    else if( inputArr[ i ][ 1 ] === "Q" ){
+    else if( inputArray[ i ][ 1 ] === "Q" ){
     
-      var qVs = inputArr[ i ][ 3 ] ;
+      var reactivePowerSetpoint = inputArray[ i ][ 3 ] ;
+            
+      //If transformer's end node reactive power is out of range of reactive power setpoint +/- epsilon then calculate delta of these values   
+      if( node.Qend > reactivePowerSetpoint + epsilon ) q = node.Qend - ( reactivePowerSetpoint + epsilon );
     
-      var bra = n;
-              
-      if( bra.Qend > qVs + eps ) q = bra.Qend - ( qVs + eps );
-    
-      else if( bra.Qend < qVs - eps ) q = ( qVs - eps ) - bra.Qend; 
+      else if( node.Qend < reactivePowerSetpoint - epsilon ) q = ( reactivePowerSetpoint - epsilon ) - node.Qend; 
        
       else continue;
       
-      tm = ( getTau( 0, true ) * 0.1 ) / q;
+      //Get Tau multiply it by 0.1 and divide it by delta u
+      delay = ( getTau( 0, true ) * 0.1 ) / q;
       
-      delArr.push( [ t, n, tm, eps, qVs ] ); 
+      delayArray.push( [ transformer, node, delay, epsilon, reactivePowerSetpoint ] ); 
     }
 
-    //delArr.push( [ t, n, tm, eps ] ); 
   }
 
-  return delArr;
+  return delayArray;
 }
 
-function switchTapOnParallelTransformers( t, value, resultFile ){
-
-  var string;
+//Function checks if transformer have any parallel transformers, if so then try to change theirs tap to match changes.
+//If any found transformer is at it's tap limit then log that in file instead doing any changes.
+function switchTapOnParallelTransformers( transformer, value, resultFile ){
 
   for( var i = 1; i < Data.N_Trf; i++ ){
 
-    nt = TrfArray.get( i );
+    nextTransformer = TrfArray.get( i );
 
-    if( t.Name === nt.Name ) continue; 
+    if( transformer.Name === nextTransformer.Name ) continue; 
     
-    if( ( t.BegName !== nt.BegName || t.EndName !== nt.EndName ) && ( t.BegName !== nt.EndName || t.EndName !== nt.BegName )  ) continue;
+    if( 
+      ( transformer.BegName !== nextTransformer.BegName || transformer.EndName !== nextTransformer.EndName ) && 
+      ( transformer.BegName !== nextTransformer.EndName || transformer.EndName !== nextTransformer.BegName )  
+    ) continue;
     
-    string = nt.Name + ": " + nt.Stp0 + " >>> ";
+    string = nextTransformer.Name + ": " + nextTransformer.Stp0 + " >>> ";
 
-    if( ( value < 0 && nt.Stp0 > 1 ) || ( value > 0 && nt.Stp0 < nt.Lstp ) ){
+    if( ( value < 0 && nextTransformer.Stp0 > 1 ) || ( value > 0 && nextTransformer.Stp0 < nextTransformer.Lstp ) ){
     
-      if( t.BegName === nt.BegName ) nt.Stp0 += value;
+      if( transformer.BegName === nextTransformer.BegName ) nextTransformer.Stp0 += value;
   
-      else nt.Stp0 -= value; 
+      else nextTransformer.Stp0 -= value; 
     }
-    
-    else resultFile.WriteLine( nt.Name + " reached max tap " + nt.Stp0 + "\\" + nt.Lstp );
+  
+    else resultFile.WriteLine( nextTransformer.Name + " reached max tap " + nextTransformer.Stp0 + "\\" + nextTransformer.Lstp );
   }
 
 }
-
 
 //Function uses JS Math.round, takes value and returns rounded value to specified decimals 
 function roundTo( value, precision ){
@@ -306,49 +313,33 @@ function setPowerFlowSettings( config ){
   Calc.Met = config.method;
 }
 
-//Basic error thrower
-function errorThrower( message, error ){
+//Basic error thrower with error message window
+function errorThrower( message ){
   
   MsgBox( message, 16, "Error" );
-  throw error;
-}
-
-//Function adds loading bin file before throwing an error
-function saveErrorThrower( message, error, binPath ){
-
-  try{ ReadTempBIN( binPath ); }
-  
-  catch( e ){ MsgBox( "Couldn't load original model", 16, "Error" ) }
-
-  errorThrower( message, error );
+  throw message;
 }
 
 //Calls built in power flow calculate function, throws error when it fails
 function CPF(){
 
-  if( CalcLF() != 1 ) errorThrower( "Power Flow calculation failed", -1 );
+  if( CalcLF() != 1 ) errorThrower( "Power Flow calculation failed" );
 }
 
-//Function takes conf object and depending on it's config creates folder in specified location. 
-//Throws error if conf object is null and when folder can't be created
-function createFolder( conf, fso ){
-
-  var message = "Unable to load configuration";
+//Function takes config object and depending on it's config creates folder in specified location. 
+//Throws error if config object is null and when folder can't be created
+function createFolder( config, fso ){
   
-  if( !conf ) errorThrower( message, message );
+  if( !config ) errorThrower( "Unable to load configuration" );
   
-  var folder = conf.folderName;
-  var folderPath = conf.homeFolder + folder;
+  var folder = config.folderName;
+  var folderPath = config.homeFolder + folder;
   
   if( !fso.FolderExists( folderPath ) ){
     
     try{ fso.CreateFolder( folderPath ); }
     
-    catch( err ){ 
-    
-      errorThrower( "Unable to create folder", "Unable to create folder, check if you are able to create folders in that location" );
-    }
-
+    catch( err ){ errorThrower( "Unable to create folder" ); }
   }
   
   folder += "\\";
@@ -356,42 +347,39 @@ function createFolder( conf, fso ){
   return folder;
 }
 
-//Function takes conf object and depending on it's config creates file in specified location.
+//Function takes config object and depending on it's config creates file in specified location.
 //Also can create folder where results are located depending on configuration file 
-//Throws error if conf object is null and when file can't be created
-function createFile( conf, fso ){
-  
-  var message = "Unable to load configuration";
-  if( !conf ) errorThrower( message, message );
+//Throws error if config object is null and when file can't be created
+function createFile( config, fso ){
+ 
+  if( !config ) errorThrower( "Unable to load configuration" );
 
   var file = null;
   
-  var folder = ( conf.createResultsFolder == 1 ) ? createFolder( conf, fso ) : "";
-  var timeStamp = ( conf.addTimestampToFile == 1 ) ? getCurrentDate() + "--" : "";
-  var fileLocation = conf.homeFolder + folder + timeStamp + conf.resultFileName + ".txt";
+  var folder = ( config.createResultsFolder == 1 ) ? createFolder( config, fso ) : "";
+  var timeStamp = ( config.addTimestampToFile == 1 ) ? getCurrentDate() + "--" : "";
+  var fileLocation = config.homeFolder + folder + timeStamp + config.resultFileName + ".txt";
   
   try{ file = fso.CreateTextFile( fileLocation ); }
   
-  catch( err ){ 
-    
-    errorThrower( "File arleady exists or unable to create it", "File arleady exists or unable to create it, check if you are able to create files in that location" );
-  }
+  catch( err ){ errorThrower( "File already exists or unable to create it" ); }
 
   return file;
 } 
 
-function readFile( conf, fso ){
+//Function takes config object and depending on it reads file from specified location.
+//Throws error if config object is null or when file can't be read 
+function readFile( config, fso ){
 
-  var message = "Unable to load configuration";
-  if( !conf ) errorThrower( message, message );
+  if( !config ) errorThrower( "Unable to load configuration" );
 
   var file = null;
 
-  var fileLocation = conf.inputFileLocation + conf.inputFileName + "." + conf.inputFileFormat;
+  var fileLocation = config.inputFileLocation + config.inputFileName + "." + config.inputFileFormat;
   
   try{ file = fso.OpenTextFile( fileLocation, 1, false, 0 ); }
 
-  catch( err ){ errorThrower( "Unable to open file", -1 ); }
+  catch( err ){ errorThrower( "Unable to find or open file" ); }
 
   return file;
 }
@@ -400,13 +388,13 @@ function readFile( conf, fso ){
 //Returns conf object with settings taken from file. If file isn't found error is throwed instead.
 function iniConfigConstructor( iniPath, fso ){
   
-  var confFile = iniPath + "\\config.ini";
+  var configFile = iniPath + "\\config.ini";
 
-  if( !fso.FileExists( confFile ) ) errorThrower( "config.ini file not found", "Config file error, make sure your file location has config.ini file" );
+  if( !fso.FileExists( configFile ) ) errorThrower( "config.ini file not found" );
 
   //Initializing plans built in ini manager
   var ini = CreateIniObject();
-  ini.Open( confFile );
+  ini.Open( configFile );
 
   var hFolder = ini.GetString( "main", "homeFolder", Main.WorkDir );
   
@@ -465,16 +453,15 @@ function iniConfigConstructor( iniPath, fso ){
  
   return conf;
 }
- 
+
+//Function gets file and takes each line into a array and after finding whiteline pushes array into other array
 function getInputArray( file ){
 
-  var arr = [];
+  var array = [];
 
   while(!file.AtEndOfStream){
 
-    var tmp = [];
-  
-    var line = file.ReadLine();
+    var tmp = [], line = file.ReadLine();
       
     while( line != "" ){
      
@@ -485,10 +472,10 @@ function getInputArray( file ){
       else break; 
     }
     
-    arr.push( tmp );
+    array.push( tmp );
   }
 
-  return arr;
+  return array;
 }
 
 //Function takes current date and returns it in file safe format  
