@@ -37,7 +37,7 @@ resultFile.WriteLine( "Base data" );
 logBaseInfo( resultFile, inputArray );
 
 //Get array with transformers that are near their max voltage/reactive power limit
-var delayArray = getDelayArray( inputArray, resultFile );
+var delayArray = getDelayArray( inputArray );
 
 //Sort delay array, so transformer with the least delay is first in array
 sortArray( delayArray );
@@ -46,11 +46,10 @@ sortArray( delayArray );
 //If it's near limit then change transformer's tap depending on taps position. After that recalulate power flow and get new delay array.
 while( delayArray.length > 0 ){
 
-  var transformer = delayArray[ 0 ][ 0 ], node = delayArray[ 0 ][ 1 ], epsilon = delayArray[ 0 ][ 3 ];
-  
+  var transformer = delayArray[ 0 ][ 0 ], node = delayArray[ 0 ][ 1 ];
   //Reactive power setpoint is required to do tap changes dependent on reactive power 
   //other calculations setpoint are directry taken from plans built in functions 
-  var reactivePowerSetpoint = ( delayArray[ 0 ][ 4 ] ) ? delayArray[ 0 ][ 4 ] : null ;
+  var epsilon = parseFloat( delayArray[ 0 ][ 3 ] ), reactivePowerSetpoint = parseFloat( delayArray[ 0 ][ 4 ] );
   
   if( 
       ( 
@@ -64,11 +63,16 @@ while( delayArray.length > 0 ){
       ( 
         ( node.Vi > node.Vs + epsilon && transformer.TapLoc === 1 ) || 
         ( node.Vi < node.Vs - epsilon && transformer.TapLoc !== 1 )  
-      )
-    ){
+      ) 
+  ){
     
-    transformer.Stp0--;
-    
+    if( switchTap( transformer, -1, resultFile ) === 0 ){
+
+      delayArray.shift();
+
+      continue;
+    }  
+      
     switchTapOnParallelTransformers( transformer, -1, resultFile );  
   }
   
@@ -85,11 +89,16 @@ while( delayArray.length > 0 ){
       ( node.Vi < node.Vs - epsilon && transformer.TapLoc === 1 )  
     )
   ){
-  
-    transformer.Stp0++;
-    
+
+    if( switchTap( transformer, 1, resultFile ) === 0 ){
+
+      delayArray.shift();
+
+      continue;
+    }  
+
     switchTapOnParallelTransformers( transformer, 1, resultFile );
-  }
+  } 
   
   else{
   
@@ -100,7 +109,7 @@ while( delayArray.length > 0 ){
 
   CPF();
   
-  delayArray = getDelayArray( inputArray, resultFile );
+  delayArray = getDelayArray( inputArray );
 
   sortArray( delayArray );
 }
@@ -210,7 +219,7 @@ function getTransformerNode( inputArrayElement, transformer ){
 }
 
 //Function takes input array and log file, returns array with delays of each transformator which falls into checks
-function getDelayArray( inputArray, resultFile ){
+function getDelayArray( inputArray ){
 
   var delayArray = [];
   
@@ -220,16 +229,8 @@ function getDelayArray( inputArray, resultFile ){
 
     var node = getTransformerNode( inputArray[ i ], transformer );
      
-    var delay = u = q = 0, epsilon = inputArray[ i ][ 2 ];
+    var delay = u = q = 0, reactivePowerSetpoint = null, epsilon = parseFloat( inputArray[ i ][ 2 ] );
     
-    //If transformer is on it's last tap then log it's details and go to next transformator
-    if( ( transformer.TapLoc === 1 && transformer.Stp0 < 2 ) || ( transformer.TapLoc === 0 && transformer.Stp0 >= transformer.Lstp ) ){ 
-    
-      resultFile.WriteLine( transformer.Name + " reached max tap " + transformer.Stp0 + "\\" + transformer.Lstp );
-
-      continue; 
-    }
-   
     //Depending on criteria specified in input file for each transfomers check if conditions are true then calculate delay and push it to delay array
 
     if( inputArray[ i ][ 1 ] === "G" || inputArray[ i ][ 1 ] === "D" ){
@@ -243,30 +244,44 @@ function getDelayArray( inputArray, resultFile ){
       
       //Get Tau multiply it by 0.1 and divide it by delta u
       delay = ( getTau( node.Vn, false ) * 0.1 ) / u;
-      
-      delayArray.push( [ transformer, node, delay, epsilon ] ); 
     }  
     
     else if( inputArray[ i ][ 1 ] === "Q" ){
     
-      var reactivePowerSetpoint = inputArray[ i ][ 3 ] ;
+      reactivePowerSetpoint = parseFloat( inputArray[ i ][ 3 ] );
             
       //If transformer's end node reactive power is out of range of reactive power setpoint +/- epsilon then calculate delta of these values   
       if( node.Qend > reactivePowerSetpoint + epsilon ) q = node.Qend - ( reactivePowerSetpoint + epsilon );
     
       else if( node.Qend < reactivePowerSetpoint - epsilon ) q = ( reactivePowerSetpoint - epsilon ) - node.Qend; 
-       
+      
       else continue;
       
       //Get Tau multiply it by 0.1 and divide it by delta u
       delay = ( getTau( 0, true ) * 0.1 ) / q;
-      
-      delayArray.push( [ transformer, node, delay, epsilon, reactivePowerSetpoint ] ); 
     }
 
+    delayArray.push( [ transformer, node, delay, epsilon, reactivePowerSetpoint ] ); 
   }
 
   return delayArray;
+}
+
+function switchTap( transfomer, value, resultFile ){
+
+  if( transfomer.Stp0 + value < 1 || transfomer.Stp0 + value > transfomer.Lstp ){
+    
+    resultFile.WriteLine( transformer.Name + " reached max/min tap " + transformer.Stp0 + "\\" + transformer.Lstp );
+  
+    return 0;
+  }
+
+  else { 
+    
+    transfomer.Stp0 += value;
+
+    return 1;
+  }
 }
 
 //Function checks if transformer have any parallel transformers, if so then try to change theirs tap to match changes.
@@ -284,16 +299,9 @@ function switchTapOnParallelTransformers( transformer, value, resultFile ){
       ( transformer.BegName !== nextTransformer.EndName || transformer.EndName !== nextTransformer.BegName )  
     ) continue;
     
-    string = nextTransformer.Name + ": " + nextTransformer.Stp0 + " >>> ";
-
-    if( ( value < 0 && nextTransformer.Stp0 > 1 ) || ( value > 0 && nextTransformer.Stp0 < nextTransformer.Lstp ) ){
-    
-      if( transformer.BegName === nextTransformer.BegName ) nextTransformer.Stp0 += value;
-  
-      else nextTransformer.Stp0 -= value; 
-    }
-  
-    else resultFile.WriteLine( nextTransformer.Name + " reached max tap " + nextTransformer.Stp0 + "\\" + nextTransformer.Lstp );
+    if( transformer.BegName === nextTransformer.BegName ) switchTap( nextTransformer, value, resultFile ); 
+        
+    else switchTap( nextTransformer, -value, resultFile);
   }
 
 }
