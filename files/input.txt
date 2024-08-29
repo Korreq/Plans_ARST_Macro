@@ -30,3 +30,15 @@ D
 WTO-A2
 D
 0.25
+
+BGC-A1
+G
+1
+
+MIK-TD1
+G
+1
+
+MIK-TD2
+D
+1

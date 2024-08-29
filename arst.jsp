@@ -34,7 +34,7 @@ var resultFile = createFile( config, fso );
 
 //Write all detected transformers from input file with taps and coresponding attribute to log file
 resultFile.WriteLine( "Base data" );
-logBaseInfo( resultFile, inputArray );
+logBaseInfo( resultFile, inputArray, config );
 
 //Get array with transformers that are near their max voltage/reactive power limit
 var delayArray = getDelayArray( inputArray );
@@ -42,15 +42,19 @@ var delayArray = getDelayArray( inputArray );
 //Sort delay array, so transformer with the least delay is first in array
 sortArray( delayArray );
 
+
+
+var getArray = true;
+
 //While there are any transformers in delay array check if the transformer with the least delay is near it's maximum voltage/reactive power limit.
 //If it's near limit then change transformer's tap depending on taps position. After that recalulate power flow and get new delay array.
 while( delayArray.length > 0 ){
 
-  var transformer = delayArray[ 0 ][ 0 ], node = delayArray[ 0 ][ 1 ];
+  var transformer = delayArray[ 0 ][ 0 ], node = delayArray[ 0 ][ 1 ], value = 0;
   //Reactive power setpoint is required to do tap changes dependent on reactive power 
   //other calculations setpoint are directry taken from plans built in functions 
   var epsilon = parseFloat( delayArray[ 0 ][ 3 ] ), reactivePowerSetpoint = parseFloat( delayArray[ 0 ][ 4 ] );
-  
+
   if( 
       ( 
         reactivePowerSetpoint && 
@@ -64,18 +68,8 @@ while( delayArray.length > 0 ){
         ( node.Vi > node.Vs + epsilon && transformer.TapLoc === 1 ) || 
         ( node.Vi < node.Vs - epsilon && transformer.TapLoc !== 1 )  
       ) 
-  ){
+  ) value = -1;
     
-    if( switchTap( transformer, -1, resultFile ) === 0 ){
-
-      delayArray.shift();
-
-      continue;
-    }  
-      
-    switchTapOnParallelTransformers( transformer, -1, resultFile );  
-  }
-  
   else if( 
     ( reactivePowerSetpoint && 
       ( 
@@ -88,35 +82,39 @@ while( delayArray.length > 0 ){
       ( node.Vi > node.Vs + epsilon && transformer.TapLoc !== 1 ) || 
       ( node.Vi < node.Vs - epsilon && transformer.TapLoc === 1 )  
     )
-  ){
+  ) value = 1;
 
-    if( switchTap( transformer, 1, resultFile ) === 0 ){
-
-      delayArray.shift();
-
-      continue;
-    }  
-
-    switchTapOnParallelTransformers( transformer, 1, resultFile );
-  } 
-  
   else{
   
     delayArray.shift();
     
+    getArray = true;
+    
     continue; 
   }
 
+  if( switchTap( transformer, value, resultFile ) === 0 ){
+
+    delayArray.shift();
+
+    getArray = false;
+    
+    continue;
+  }  
+
+  
+  switchTapOnParallelTransformers( transformer, value, resultFile );
+
   CPF();
   
-  delayArray = getDelayArray( inputArray );
+  if( getArray ) delayArray = getDelayArray( inputArray );
 
   sortArray( delayArray );
 }
 
 //Write all detected transformers from input file with taps and coresponding attribute to log file after all tap changes are done
 resultFile.WriteLine( "Final data" );
-logBaseInfo( resultFile, inputArray );
+logBaseInfo( resultFile, inputArray, config );
 resultFile.close();
 
 //If safe mode is active, load back original model, meaning that all changes done by this macro is reversed to original state
@@ -131,7 +129,7 @@ if( config.safeMode == 1 ){
 
 //Functon takes file to log data into and array with found transformers from input file and
 //transformers details are written to logging file
-function logBaseInfo( file, inputArray ){
+function logBaseInfo( file, inputArray, config ){
 
   for( i in inputArray ){
 
@@ -140,9 +138,9 @@ function logBaseInfo( file, inputArray ){
 
     file.Write( transformer.Name + ", Tap: " + transformer.Stp0 + "\\" + transformer.Lstp + ", Node: " + node.Name );
     
-    if( inputArray[ i ][ 1 ] == "Q" ) file.WriteLine( ", React Pow: " + node.Qend + "\\" + inputArray[ i ][ 3 ] );
+    if( inputArray[ i ][ 1 ] == "Q" ) file.WriteLine( ", React Pow: " + roundTo( node.Qend, config.roundingPrecision ) + "\\" + inputArray[ i ][ 3 ] );
     
-    else file.WriteLine(  ", Volt: " + node.Vi + "\\" + node.Vs );
+    else file.WriteLine(  ", Volt: " + roundTo( node.Vi, config.roundingPrecision ) + "\\" + node.Vs );
   }
 
   file.WriteLine( " " );
@@ -232,7 +230,7 @@ function getDelayArray( inputArray ){
     var delay = u = q = 0, reactivePowerSetpoint = null, epsilon = parseFloat( inputArray[ i ][ 2 ] );
     
     //Depending on criteria specified in input file for each transfomers check if conditions are true then calculate delay and push it to delay array
-
+   
     if( inputArray[ i ][ 1 ] === "G" || inputArray[ i ][ 1 ] === "D" ){
 
       //If calculated voltage out of range of voltage setpoint +/- epsilon then calculate delta of these values 
