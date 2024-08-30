@@ -9,19 +9,19 @@ Q
 
 MIL-T4B                        
 D
-0.25
+0.1
 
 MIL-A5         
 D
-0.25
+0.1
 
 OLT-A1
 D
-0.5
+0.25
 
 OLT-A2
 D
-0.5
+0.25
 
 WTO-A1
 D
