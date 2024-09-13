@@ -53,23 +53,49 @@ while( delayArray.length > 0 ){
   //other calculations setpoint are directry taken from plans built in functions 
   var epsilon = parseFloat( delayArray[ 0 ][ 3 ] ), reactivePowerSetpoint = parseFloat( delayArray[ 0 ][ 4 ] );
 
+  var nodeValue = setpoint = null;
+
+  if( delayArray[ 0 ][ 4 ] ){
+
+    setpoint = parseFloat( delayArray[ 0 ][ 4 ] );
+
+    nodeValue = node.Qend;
+  }
+  else{
+
+    setpoint = node.Vs;
+
+    nodeValue = node.Vi;
+  }
+
   var temp = true;
 
   var diff = prevNodeVi = 0;
-
-  //var usingDiff = false;
-
+  
   while( temp ){
 
-    //Alternative to writing epsilon values in input file
-    /*
-    if( diff !== 0 && diff > epsilon){ 
-    
-      epsilon = diff; 
+    if( ( nodeValue > setpoint + epsilon && transformer.TapLoc === 1 ) || 
+    ( nodeValue < setpoint - epsilon && transformer.TapLoc !== 1 ) ){
       
-      usingDiff = true;
-    } 
-    */
+      value = -1;
+    }
+
+    else if( ( nodeValue > setpoint + epsilon && transformer.TapLoc !== 1 ) || 
+    ( nodeValue < setpoint - epsilon && transformer.TapLoc === 1 ) ){
+      
+      value = 1;
+    }
+
+    else{
+
+      delayArray.shift();
+
+      getArray = true;
+
+      break;
+    }
+
+    /*
     if( 
       ( 
         reactivePowerSetpoint && 
@@ -98,19 +124,19 @@ while( delayArray.length > 0 ){
         ( node.Vi < node.Vs - epsilon && transformer.TapLoc === 1 )  
       )
     ) value = 1;
-
+    
     else{
     
       delayArray.shift();
-      
-      //getArray = ( !usingDiff ) ? true : false;
-      
+        
       getArray = true;
 
       break; 
     }
+    */
+    //prevNodeVi = ( reactivePowerSetpoint ) ? node.Qend : node.Vi;
 
-    prevNodeVi = ( reactivePowerSetpoint ) ? node.Qend : node.Vi;
+
 
     if( switchTap( transformer, value, resultFile ) === 0 ){
 
@@ -121,12 +147,27 @@ while( delayArray.length > 0 ){
       break;
     } 
 
-    else 
-    //if( diff === 0 )
+    else{ 
       
-      { 
+      prevNodeVi = nodeValue;
     
-      
+      nodeValue = ( delayArray[ 0 ][ 4 ] ) ? node.Qend : node.Vi;
+    
+      diff = Math.abs( prevNodeVi - nodeValue );
+  
+      if(
+        ( nodeValue < setpoint + epsilon && nodeValue + diff > setpoint + epsilon ) ||
+        ( nodeValue > setpoint - epsilon && nodeValue - diff < setpoint - epsilon )
+      ){
+
+        temp = false;
+
+        getArray = false;
+
+        delayArray.shift();
+      }
+
+      /*
       diff = ( reactivePowerSetpoint ) ?  Math.abs( prevNodeVi - node.Qend ) : Math.abs( prevNodeVi - node.Vi );
       
       if( reactivePowerSetpoint ){
@@ -159,82 +200,20 @@ while( delayArray.length > 0 ){
         }
 
       }
-
+      */
 
     }
 
     switchTapOnParallelTransformers( transformer, value, resultFile );
   }
 
-
-
-
-
-
-
-/*
-
-  if( 
-      ( 
-        reactivePowerSetpoint && 
-        ( 
-          ( node.Qend > reactivePowerSetpoint + epsilon && transformer.TapLoc === 1 ) || 
-          ( node.Qend < reactivePowerSetpoint - epsilon && transformer.TapLoc !== 1 ) 
-        )    
-      ) 
-      || 
-      ( 
-        ( node.Vi > node.Vs + epsilon && transformer.TapLoc === 1 ) || 
-        ( node.Vi < node.Vs - epsilon && transformer.TapLoc !== 1 )  
-      ) 
-  ) value = -1;
-    
-  else if( 
-    ( reactivePowerSetpoint && 
-      ( 
-        ( node.Qend > reactivePowerSetpoint + epsilon && transformer.TapLoc !== 1 ) || 
-        ( node.Qend < reactivePowerSetpoint - epsilon && transformer.TapLoc === 1 ) 
-      )    
-    ) 
-    || 
-    ( 
-      ( node.Vi > node.Vs + epsilon && transformer.TapLoc !== 1 ) || 
-      ( node.Vi < node.Vs - epsilon && transformer.TapLoc === 1 )  
-    )
-  ) value = 1;
-
-  else{
-  
-    delayArray.shift();
-    
-    getArray = true;
-    
-    continue; 
-  }
-
-  if( switchTap( transformer, value, resultFile ) === 0 ){
-
-    delayArray.shift();
-
-    getArray = false;
-    
-    continue;
-  }  
-
-  
-  switchTapOnParallelTransformers( transformer, value, resultFile );
-
-  CPF();
-
-*/
- 
   if( getArray ){ 
   
- 
-  delayArray = getDelayArray( inputArray ); 
+    delayArray = getDelayArray( inputArray ); 
 
-  sortArray( delayArray );
+    sortArray( delayArray );
   }
+
 }
 
 //Write all detected transformers from input file with taps and coresponding attribute to log file after all tap changes are done
@@ -394,7 +373,7 @@ function switchTap( transfomer, value, resultFile ){
 
   if( transfomer.Stp0 + value < 1 || transfomer.Stp0 + value > transfomer.Lstp ){
     
-    resultFile.WriteLine( transformer.Name + " reached max/min tap " + transformer.Stp0 + "\\" + transformer.Lstp );
+    resultFile.WriteLine( transformer.Name + " reached end tap " + transformer.Stp0 + "\\" + transformer.Lstp );
   
     return 0;
   }
