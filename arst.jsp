@@ -45,7 +45,7 @@ sortArray( delayArray );
 var getArray = true;
 
 //While there are any transformers in delay array check if the transformer with the least delay is near it's maximum voltage/reactive power limit.
-//If it's near limit then change transformer's tap depending on taps position. After that recalulate power flow and get new delay array.
+//If it's near limit then change transformer's tap until it isn't. After that recalulate power flow and get new delay array.
 while( delayArray.length > 0 ){
 
   var transformer = delayArray[ 0 ][ 0 ], node = delayArray[ 0 ][ 1 ], value = 0;
@@ -95,49 +95,6 @@ while( delayArray.length > 0 ){
       break;
     }
 
-    /*
-    if( 
-      ( 
-        reactivePowerSetpoint && 
-        ( 
-          ( node.Qend > reactivePowerSetpoint + epsilon && transformer.TapLoc === 1 ) || 
-          ( node.Qend < reactivePowerSetpoint - epsilon && transformer.TapLoc !== 1 ) 
-        )    
-      ) 
-      || 
-      ( 
-        ( node.Vi > node.Vs + epsilon && transformer.TapLoc === 1 ) || 
-        ( node.Vi < node.Vs - epsilon && transformer.TapLoc !== 1 )  
-      ) 
-    ) value = -1;
-    
-    else if( 
-      ( reactivePowerSetpoint && 
-        ( 
-          ( node.Qend > reactivePowerSetpoint + epsilon && transformer.TapLoc !== 1 ) || 
-          ( node.Qend < reactivePowerSetpoint - epsilon && transformer.TapLoc === 1 ) 
-        )    
-      ) 
-      || 
-      ( 
-        ( node.Vi > node.Vs + epsilon && transformer.TapLoc !== 1 ) || 
-        ( node.Vi < node.Vs - epsilon && transformer.TapLoc === 1 )  
-      )
-    ) value = 1;
-    
-    else{
-    
-      delayArray.shift();
-        
-      getArray = true;
-
-      break; 
-    }
-    */
-    //prevNodeVi = ( reactivePowerSetpoint ) ? node.Qend : node.Vi;
-
-
-
     if( switchTap( transformer, value, resultFile ) === 0 ){
 
       delayArray.shift();
@@ -166,41 +123,6 @@ while( delayArray.length > 0 ){
 
         delayArray.shift();
       }
-
-      /*
-      diff = ( reactivePowerSetpoint ) ?  Math.abs( prevNodeVi - node.Qend ) : Math.abs( prevNodeVi - node.Vi );
-      
-      if( reactivePowerSetpoint ){
-
-        if( 
-          ( node.Qend < reactivePowerSetpoint + epsilon && node.Qend + diff > reactivePowerSetpoint + epsilon ) || 
-          ( node.Qend > reactivePowerSetpoint - epsilon && node.Qend - diff < reactivePowerSetpoint - epsilon )  
-        ){
-
-          temp = false;
-
-          getArray = false;
-          
-          delayArray.shift();
-        }
-
-      }
-      else{
-
-        if( 
-          ( node.Vi < node.Vs + epsilon && node.Vi + diff > node.Vs + epsilon ) || 
-          ( node.Vi > node.Vs - epsilon && node.Vi - diff < node.Vs - epsilon )  
-        ){
-
-          temp = false;
-
-          getArray = false;
-          
-          delayArray.shift();
-        }
-
-      }
-      */
 
     }
 
@@ -250,6 +172,7 @@ function logBaseInfo( file, inputArray, config ){
   file.WriteLine( " " );
 }
 
+//Function takes unsorted 2-dimensional array and sorts it by delay ( int ) from lowest to highest
 function sortArray( array ){
 
   for( i in array ){
@@ -320,7 +243,7 @@ function getTransformerNode( inputArrayElement, transformer ){
   return n;
 }
 
-//Function takes input array and log file, returns array with delays of each transformator which falls into checks
+//Function takes input array and log file, returns array with delays of each transformator which passes checks
 function getDelayArray( inputArray ){
 
   var delayArray = [];
@@ -369,10 +292,11 @@ function getDelayArray( inputArray ){
   return delayArray;
 }
 
-function switchTap( transfomer, value, resultFile ){
+//Function changes transformer's tap dependig on value, logs if tap change would be outside taps range 
+function switchTap( transformer, value, resultFile ){
 
-  if( transfomer.Stp0 + value < 1 || transfomer.Stp0 + value > transfomer.Lstp ){
-    
+  if( transformer.Stp0 + value < 1 || transformer.Stp0 + value > transformer.Lstp ){
+       
     resultFile.WriteLine( transformer.Name + " reached end tap " + transformer.Stp0 + "\\" + transformer.Lstp );
   
     return 0;
@@ -380,7 +304,7 @@ function switchTap( transfomer, value, resultFile ){
 
   else { 
     
-    transfomer.Stp0 += value;
+    transformer.Stp0 += value;
 
     CPF();
 
@@ -432,7 +356,7 @@ function errorThrower( message ){
   throw message;
 }
 
-//Calls built in power flow calculate function, throws error when it fails
+//Calls built in power flow calculate function, throws error if it fails
 function CPF(){
 
   if( CalcLF() != 1 ) errorThrower( "Power Flow calculation failed" );
